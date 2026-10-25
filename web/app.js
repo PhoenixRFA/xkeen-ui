@@ -154,7 +154,7 @@ $('#savecfg').onclick = async e => {
 
 // collapse state of the Clients card is remembered
 const cc = $('#clientsCard');
-try { if (localStorage.getItem('xk.clients') === '0') cc.open = false; } catch (e) {}
+try { if (localStorage.getItem('xk.clients') === '1') cc.open = true; } catch (e) {}
 cc.addEventListener('toggle', () => { try { localStorage.setItem('xk.clients', cc.open ? '1' : '0'); } catch (e) {} });
 
 // ---- checks ----
@@ -207,6 +207,41 @@ $('#logrefresh').onclick = loadLog;
 $('#logname').onchange = loadLog;
 $('#logn').onchange = loadLog;
 $('#logsCard').addEventListener('toggle', () => { if ($('#logsCard').open) loadLog(); });
+
+// ---- sub.curl ----
+async function loadBackups() {
+  const sel = $('#subbk'); sel.replaceChildren(el('option', 'Backups…')); sel.firstChild.value = '';
+  try {
+    (await api('/api/sub-curl/backups')).backups.forEach(b => {
+      const o = el('option', b.name.replace('sub.curl.', '') + ' (' + b.size + ' B)'); o.value = b.name; sel.append(o);
+    });
+  } catch (e) {}
+}
+async function loadSubCurl() {
+  try {
+    const d = await api('/api/sub-curl');
+    $('#subcurl').value = d.content;
+    $('#submsg').textContent = d.exists ? 'Loaded.' : 'File does not exist yet; saving will create it.';
+  } catch (e) { if (e.status === 401) { show(false); return; } $('#submsg').textContent = e.message; }
+  loadBackups();
+}
+async function saveSubCurl(thenUpdate) {
+  const msg = $('#submsg'); msg.className = 'mut small';
+  try {
+    const d = await api('/api/sub-curl', { method: 'PUT', body: JSON.stringify({ content: $('#subcurl').value }) });
+    msg.textContent = 'Saved' + (d.backup ? ' (previous version: ' + d.backup.replace('sub.curl.', '') + ')' : '') + '.';
+    loadBackups();
+    if (thenUpdate) runJob('Update subscription', post('/api/subscription/update'));
+  } catch (e) { if (e.status === 401) { show(false); return; } msg.textContent = e.message; msg.className = 'warn small'; }
+}
+$('#subsave').onclick = () => saveSubCurl(false);
+$('#subsaveupd').onclick = () => saveSubCurl(true);
+$('#subbkload').onclick = async () => {
+  const name = $('#subbk').value; if (!name) return;
+  try { $('#subcurl').value = (await api('/api/sub-curl/backups/' + name)).content; $('#submsg').textContent = 'Backup loaded into the editor. Press Save to apply it.'; }
+  catch (e) { $('#submsg').textContent = e.message; }
+};
+$('#subcurlCard').addEventListener('toggle', () => { if ($('#subcurlCard').open) loadSubCurl(); });
 
 (async () => {
   try { $('#ver').textContent = (await api('/api/version')).version; } catch (e) {}

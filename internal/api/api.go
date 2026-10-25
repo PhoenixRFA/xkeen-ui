@@ -60,6 +60,7 @@ func (s *Server) Handler() http.Handler {
 	s.xkeenRoutes(mux)
 	s.policyRoutes(mux)
 	s.checkRoutes(mux)
+	s.subCurlRoutes(mux)
 	mux.Handle("/", http.FileServer(http.FS(web.FS)))
 	return s.secure(s.guard(mux))
 }
