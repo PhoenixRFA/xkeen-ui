@@ -26,6 +26,8 @@ type Paths struct {
 	ErrorLog   string `json:"error_log"`
 	SubLog     string `json:"sub_log"`
 	BackupDir  string `json:"backup_dir"`
+	Ndmc       string `json:"ndmc"`
+	RCIURL     string `json:"rci_url"`
 }
 
 type Policies struct {
@@ -71,6 +73,8 @@ func Default() *Config {
 			ErrorLog:   "/opt/var/log/xray/error.log",
 			SubLog:     "/opt/var/log/xray/sub-update.log",
 			BackupDir:  "/opt/etc/xray/backup",
+			Ndmc:       "/bin/ndmc",
+			RCIURL:     "http://127.0.0.1:79",
 		},
 		Policies: Policies{Highlight: []string{"xkeen", "xkeen_full"}},
 		Checks: Checks{

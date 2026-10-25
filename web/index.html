@@ -31,6 +31,10 @@ select{font:inherit;border-radius:8px;border:1px solid var(--line);background:#0
 button:disabled{opacity:.5;cursor:wait}
 .ok{color:#3ecf8e}.warn{color:var(--bad)}
 ul{margin:8px 0;padding-left:20px}
+.client{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line)}
+.cname{font-weight:600}.small{font-size:13px}
+select.hl{border-color:var(--acc)}
+@media(max-width:520px){.client{flex-direction:column;align-items:stretch}}
 </style>
 </head>
 <body>
@@ -42,7 +46,7 @@ ul{margin:8px 0;padding-left:20px}
   <button id="go">Sign in</button>
 </section>
 <div id="app" hidden>
-  <header><strong>xkeen-ui</strong><button class="ghost" id="out">Sign out</button></header>
+  <header><strong>xkeen-ui</strong><span><span id="unsaved" class="warn" hidden>Unsaved router changes <button id="savecfg">Save</button> </span><button class="ghost" id="out">Sign out</button></span></header>
   <main>
     <div class="grid">
       <div class="card"><h3>XKeen <span id="dot" class="dot"></span></h3>
@@ -61,6 +65,9 @@ ul{margin:8px 0;padding-left:20px}
       <div id="parts" class="mut"></div>
       <div class="row"><button id="setmain">Apply</button></div>
       <details><summary class="mut">Nodes in subscription</summary><ul id="nodes" class="mut"></ul></details></div>
+    <div class="card"><h3>Clients</h3>
+      <input id="q" placeholder="Search by name, IP or MAC" spellcheck="false">
+      <div id="clients"></div></div>
     <div class="card"><h3>Config files (read-only)</h3>
       <div class="row"><select id="file"></select>
       <label class="mut"><input type="checkbox" id="reveal" style="width:auto;margin:0 6px"> reveal secrets</label>

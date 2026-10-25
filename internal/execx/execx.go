@@ -8,8 +8,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"time"
 )
+
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
 const safePath = "PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
@@ -58,7 +61,7 @@ func (r *Runner) Run(ctx context.Context, timeout time.Duration, env []string, n
 	cmd.Stdout, cmd.Stderr = out, out
 	cmd.WaitDelay = 2 * time.Second // init scripts leave daemons holding the pipe open
 	err := cmd.Run()
-	res := Result{Output: out.buf.String()}
+	res := Result{Output: ansiRe.ReplaceAllString(out.buf.String(), "")} // drop terminal colors
 	if errors.Is(err, exec.ErrWaitDelay) {
 		return res, nil // process exited with 0; a background child kept the pipe
 	}

@@ -57,6 +57,7 @@ async function loadStatus() { try { renderStatus(await api('/api/xkeen/status'))
 
 async function loadAll() {
   loadStatus();
+  loadClients();
   try { const f = await api('/api/files'); const sel = $('#file'); sel.replaceChildren(); f.files.forEach(n => sel.append(el('option', n))); } catch (e) {}
 }
 
@@ -102,6 +103,50 @@ $('#view').onclick = async () => {
     out.textContent = (f.masked ? '// secrets masked\n' : '') + f.content;
   } catch (e) { out.textContent = e.message; }
   out.hidden = false;
+};
+
+let pol = { policies: [], clients: [] };
+
+function renderClients() {
+  const q = $('#q').value.toLowerCase();
+  const box = $('#clients'); box.replaceChildren();
+  pol.clients.filter(c => !q || (c.name + ' ' + c.ip + ' ' + c.mac).toLowerCase().includes(q)).forEach(c => {
+    const row = el('div', null, 'client');
+    const left = el('div');
+    const title = el('div', c.name, 'cname');
+    title.append(el('span', null, 'dot ' + (c.online ? 'on' : '')));
+    left.append(title, el('div', (c.ip || '—') + ' · ' + c.mac, 'mut small'));
+    const sel = document.createElement('select');
+    const opts = [['', 'Default (no policy)']].concat(pol.policies.map(p => [p.id, p.id + ' · ' + p.name]));
+    if (c.policy && !pol.policies.some(p => p.id === c.policy)) opts.push([c.policy, c.policy + ' (unknown)']);
+    opts.forEach(([v, t]) => { const o = el('option', t); o.value = v; sel.append(o); });
+    sel.value = c.policy || '';
+    const hl = () => sel.classList.toggle('hl', !!(pol.policies.find(p => p.id === sel.value) || {}).highlight);
+    hl();
+    sel.onchange = async () => {
+      sel.disabled = true;
+      try {
+        await api('/api/clients/' + encodeURIComponent(c.mac) + '/policy', { method: 'PUT', body: JSON.stringify({ policy: sel.value || null }) });
+        c.policy = sel.value; $('#unsaved').hidden = false; hl();
+      } catch (e) {
+        if (e.status === 401) { show(false); return; }
+        alert('Failed: ' + e.message); sel.value = c.policy || '';
+      }
+      sel.disabled = false;
+    };
+    row.append(left, sel); box.append(row);
+  });
+  if (!box.children.length) box.append(el('div', 'No clients', 'mut'));
+}
+
+async function loadClients() {
+  try { pol = await api('/api/clients'); $('#unsaved').hidden = !pol.unsaved; renderClients(); }
+  catch (e) { if (e.status === 401) show(false); else { $('#clients').replaceChildren(el('div', e.message, 'warn')); } }
+}
+$('#q').oninput = renderClients;
+$('#savecfg').onclick = async () => {
+  try { await api('/api/system/save', { method: 'POST' }); $('#unsaved').hidden = true; }
+  catch (e) { alert(e.message); }
 };
 
 (async () => {

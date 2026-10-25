@@ -26,6 +26,7 @@ type Server struct {
 	Exec     *execx.Runner
 	nets     []*net.IPNet
 	xk       xkeenState
+	pol      policyState
 }
 
 func New(cfgPath string, cfg *config.Config, version string) (*Server, error) {
@@ -36,7 +37,7 @@ func New(cfgPath string, cfg *config.Config, version string) (*Server, error) {
 		Sessions: auth.NewSessions(time.Duration(cfg.SessionTTLHours) * time.Hour),
 		Limiter:  auth.NewLimiter(),
 		Jobs:     jobs.New(),
-		Exec: execx.New(cfg.Paths.InitScript, cfg.Paths.SubUpdate, cfg.Paths.SetMain, cfg.Checks.XrayBin),
+		Exec: execx.New(cfg.Paths.InitScript, cfg.Paths.SubUpdate, cfg.Paths.SetMain, cfg.Checks.XrayBin, cfg.Paths.Ndmc),
 	}
 	for _, c := range cfg.AllowCIDRs {
 		_, n, err := net.ParseCIDR(c)
@@ -56,6 +57,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/me", s.me)
 	mux.HandleFunc("GET /api/jobs/{id}", s.job)
 	s.xkeenRoutes(mux)
+	s.policyRoutes(mux)
 	mux.Handle("/", http.FileServer(http.FS(web.FS)))
 	return s.secure(s.guard(mux))
 }
