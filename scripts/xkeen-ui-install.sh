@@ -1,0 +1,271 @@
+#!/bin/sh
+# ============================================================================
+# xkeen-ui installer for Keenetic + Entware.
+#   install   [--bin PATH | --url URL] [--sha256 HASH] [--listen IP:PORT]
+#   update    [--bin PATH | --url URL] [--sha256 HASH] [--force]
+#   uninstall [--purge] [-y]
+#   status
+# Never touches /opt/etc/xray, cron, Entware packages or router settings.
+# ============================================================================
+set -u
+export PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+OPT=${XKUI_OPT:-/opt}              # prefix, overridable for testing
+BIN=$OPT/sbin/xkeen-ui
+PREV=$BIN.prev
+CONF_DIR=$OPT/etc/xkeen-ui
+CONF=$CONF_DIR/config.json
+INIT=$OPT/etc/init.d/S99xkeen-ui
+LOG=$OPT/var/log/xkeen-ui.log
+PIDF=$OPT/var/run/xkeen-ui.pid
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+  cat << 'USAGE'
+Usage: xkeen-ui-install.sh <command> [options]
+
+Commands:
+  install     first installation (creates config and prints the password once)
+  update      replace the binary, keep config; rolls back if the new one fails
+  uninstall   remove service and binary; asks what to do with the config
+  status      show what is installed
+
+Options:
+  --bin PATH      binary copied to the router (e.g. via scp)
+  --url URL       download the binary (URL.sha256 is used if present)
+  --sha256 HASH   expected checksum (a PATH.sha256 file next to --bin is used if present)
+  --listen A:P    listen address for install (default: LAN IP of br0, port 8088)
+  --force         update even if the version is the same
+  --purge         uninstall: also delete the config without asking
+  -y              uninstall: keep the config without asking
+USAGE
+}
+
+CMD=${1:-}
+[ $# -gt 0 ] && shift
+BINSRC=""; URL=""; SHA=""; LISTEN=""; FORCE=""; PURGE=""; YES=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --bin)    [ -n "${2:-}" ] || die "--bin needs a value";    BINSRC=$2; shift 2 ;;
+    --url)    [ -n "${2:-}" ] || die "--url needs a value";    URL=$2;    shift 2 ;;
+    --sha256) [ -n "${2:-}" ] || die "--sha256 needs a value"; SHA=$2;    shift 2 ;;
+    --listen) [ -n "${2:-}" ] || die "--listen needs a value"; LISTEN=$2; shift 2 ;;
+    --force)  FORCE=1; shift ;;
+    --purge)  PURGE=1; shift ;;
+    -y|--yes) YES=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "unknown option: $1" ;;
+  esac
+done
+
+[ -n "${XKUI_NOROOT:-}" ] || [ "$(id -u)" = 0 ] || die "run as root"
+
+TMP=$(mktemp -d /tmp/xkeen-ui-inst.XXXXXX) || die "cannot create temp dir"
+trap 'rm -rf "$TMP"' EXIT
+
+# --- helpers -----------------------------------------------------------------
+fetch() {  # fetch URL to stdout
+  if command -v curl >/dev/null 2>&1; then curl -fsS --max-time 3 "$1"
+  else wget -qO- -T 3 "$1"; fi
+}
+download() {  # download URL FILE
+  if command -v curl >/dev/null 2>&1; then curl -fsSL --max-time 120 -o "$2" "$1"
+  else wget -q -T 60 -O "$2" "$1"; fi
+}
+listen_addr() {
+  [ -f "$CONF" ] || return 1
+  sed -n 's/.*"listen"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONF" | head -n 1
+}
+detect_ip() {
+  ip=$(ip -4 addr show br0 2>/dev/null | sed -n 's/.*inet \([0-9.]*\)\/.*/\1/p' | head -n 1)
+  [ -n "$ip" ] || ip=$(ifconfig br0 2>/dev/null | sed -n 's/.*inet addr:\([0-9.]*\).*/\1/p' | head -n 1)
+  printf '%s' "$ip"
+}
+is_running() { [ -f "$PIDF" ] && kill -0 "$(cat "$PIDF")" 2>/dev/null; }
+current_version() { [ -x "$BIN" ] && "$BIN" -v 2>&1 | head -n 1; }
+
+health() {  # wait up to 10 s for /api/version
+  addr=$(listen_addr) || return 1
+  [ -n "$addr" ] || return 1
+  i=0
+  while [ "$i" -lt 10 ]; do
+    if fetch "http://$addr/api/version" 2>/dev/null | grep -q '"version"'; then return 0; fi
+    sleep 1; i=$((i + 1))
+  done
+  return 1
+}
+
+get_binary() {
+  NEWBIN=$TMP/xkeen-ui.new
+  if [ -n "$BINSRC" ]; then
+    [ -f "$BINSRC" ] || die "file not found: $BINSRC"
+    cp "$BINSRC" "$NEWBIN" || die "copy failed"
+    if [ -z "$SHA" ] && [ -f "$BINSRC.sha256" ]; then SHA=$(awk '{print $1; exit}' "$BINSRC.sha256"); fi
+  elif [ -n "$URL" ]; then
+    download "$URL" "$NEWBIN" || die "download failed: $URL"
+    if [ -z "$SHA" ] && download "$URL.sha256" "$TMP/sha" 2>/dev/null; then SHA=$(awk '{print $1; exit}' "$TMP/sha"); fi
+  else
+    die "specify --bin PATH or --url URL"
+  fi
+  if [ -n "$SHA" ]; then
+    got=$(sha256sum "$NEWBIN" | awk '{print $1}')
+    want=$(printf '%s' "$SHA" | tr 'A-F' 'a-f')
+    [ "$got" = "$want" ] || die "sha256 mismatch (got $got)"
+    say "sha256 OK"
+  else
+    say "WARNING: no checksum given, integrity not verified"
+  fi
+  chmod 755 "$NEWBIN"
+  NEWVER=$("$NEWBIN" -v 2>&1 | head -n 1)
+  case "$NEWVER" in xkeen-ui*) ;; *) die "binary does not run on this router: $NEWVER" ;; esac
+}
+
+install_bin() { mkdir -p "$(dirname "$BIN")" && cp "$NEWBIN" "$BIN.new" && chmod 755 "$BIN.new" && mv "$BIN.new" "$BIN"; }
+
+write_init() {
+  mkdir -p "$(dirname "$INIT")" "$OPT/var/log" "$OPT/var/run"
+  cat > "$INIT.new" << 'INITEOF'
+#!/bin/sh
+# xkeen-ui service (generated by xkeen-ui-install.sh)
+export PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
+BIN=@OPT@/sbin/xkeen-ui
+CONF=@OPT@/etc/xkeen-ui/config.json
+LOG=@OPT@/var/log/xkeen-ui.log
+PIDF=@OPT@/var/run/xkeen-ui.pid
+
+is_running() { [ -f "$PIDF" ] && kill -0 "$(cat "$PIDF")" 2>/dev/null; }
+
+start() {
+  if is_running; then echo "xkeen-ui already running"; return 0; fi
+  mkdir -p "$(dirname "$LOG")" "$(dirname "$PIDF")"
+  if [ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -gt 1048576 ]; then mv "$LOG" "$LOG.1"; fi
+  if command -v nohup >/dev/null 2>&1; then
+    nohup "$BIN" -config "$CONF" >> "$LOG" 2>&1 &
+  else
+    "$BIN" -config "$CONF" >> "$LOG" 2>&1 &
+  fi
+  echo $! > "$PIDF"
+  sleep 1
+  if is_running; then echo "xkeen-ui started"; else echo "xkeen-ui failed to start, see $LOG"; rm -f "$PIDF"; return 1; fi
+}
+
+stop() {
+  if ! is_running; then echo "xkeen-ui not running"; rm -f "$PIDF"; return 0; fi
+  pid=$(cat "$PIDF"); kill "$pid" 2>/dev/null
+  i=0
+  while is_running && [ "$i" -lt 10 ]; do sleep 1; i=$((i + 1)); done
+  if is_running; then kill -9 "$pid" 2>/dev/null; fi
+  rm -f "$PIDF"; echo "xkeen-ui stopped"
+}
+
+case "${1:-}" in
+  start)   start ;;
+  stop)    stop ;;
+  restart) stop; start ;;
+  status)  if is_running; then echo "xkeen-ui running (pid $(cat "$PIDF"))"; else echo "xkeen-ui stopped"; exit 1; fi ;;
+  *) echo "Usage: $0 {start|stop|restart|status}"; exit 2 ;;
+esac
+INITEOF
+  sed -i "s#@OPT@#$OPT#g" "$INIT.new" && chmod 755 "$INIT.new" && mv "$INIT.new" "$INIT"
+}
+
+# --- commands ----------------------------------------------------------------
+do_install() {
+  [ -x "$BIN" ] && die "already installed ($(current_version)); use: update"
+  [ -x "$OPT/etc/init.d/S05xkeen" ] || say "WARNING: XKeen init script not found; the UI will install but its XKeen features will not work"
+  command -v ndmc >/dev/null 2>&1 || say "WARNING: ndmc not found"
+  get_binary
+  install_bin || die "cannot install binary"
+  say "Binary installed: $BIN ($NEWVER)"
+
+  mkdir -p "$CONF_DIR" && chmod 700 "$CONF_DIR"
+  INITOUT=""
+  if [ -f "$CONF" ]; then
+    say "Config exists, keeping it: $CONF"
+  else
+    ip=${LISTEN%:*}; port=${LISTEN##*:}
+    [ -n "$LISTEN" ] || { ip=$(detect_ip); port=8088; }
+    if [ -n "$ip" ]; then
+      INITOUT=$("$BIN" init -config "$CONF" -listen "$ip:$port" -allow "${ip%.*}.0/24" -dns "$ip") || die "config creation failed"
+    else
+      say "WARNING: LAN address not detected, using defaults (192.168.1.1:8088); edit $CONF if needed"
+      INITOUT=$("$BIN" init -config "$CONF") || die "config creation failed"
+    fi
+  fi
+
+  write_init || die "cannot write init script"
+  "$INIT" start
+  if health; then
+    say "Service is up."
+  else
+    say "WARNING: service did not answer on $(listen_addr); check $LOG"
+  fi
+  say ""
+  say "$NEWVER installed."
+  say "URL: http://$(listen_addr)/"
+  if [ -n "$INITOUT" ]; then
+    say "$INITOUT" | grep -E '^(User|Password):'
+    say "The password is shown only once. Reset it with: $BIN passwd"
+  fi
+}
+
+do_update() {
+  [ -x "$BIN" ] || die "not installed; use: install"
+  OLDVER=$(current_version)
+  get_binary
+  if [ "$OLDVER" = "$NEWVER" ] && [ -z "$FORCE" ]; then
+    say "Already at $NEWVER (use --force to reinstall)."; exit 0
+  fi
+  [ -x "$INIT" ] || write_init
+  "$INIT" stop
+  cp -p "$BIN" "$PREV" || die "cannot save previous binary"
+  install_bin || { cp -p "$PREV" "$BIN"; "$INIT" start; die "cannot install binary, previous version restored"; }
+  "$INIT" start
+  if health; then
+    say "Updated: $OLDVER -> $NEWVER (previous binary kept as $PREV)"
+  else
+    say "New version did not come up; rolling back..."
+    "$INIT" stop
+    cp -p "$PREV" "$BIN.new" && mv "$BIN.new" "$BIN"
+    "$INIT" start
+    if health; then say "ROLLED BACK to $OLDVER."; else say "Rollback started but health check failed; see $LOG"; fi
+    exit 1
+  fi
+}
+
+do_uninstall() {
+  [ -x "$INIT" ] && "$INIT" stop
+  rm -f "$INIT" "$BIN" "$BIN.new" "$PREV" "$PIDF" "$LOG" "$LOG.1"
+  say "Removed service and binary."
+  if [ -d "$CONF_DIR" ]; then
+    if [ -n "$PURGE" ]; then
+      rm -rf "$CONF_DIR"; say "Config removed."
+    elif [ -n "$YES" ]; then
+      say "Config kept: $CONF_DIR"
+    else
+      printf 'Remove config and password in %s? [y/N] ' "$CONF_DIR"
+      ans=""; read -r ans || ans=""
+      case "$ans" in y|Y|yes) rm -rf "$CONF_DIR"; say "Config removed." ;; *) say "Config kept: $CONF_DIR" ;; esac
+    fi
+  fi
+  say "XKeen/Xray configs, backups, cron and Entware were not touched."
+}
+
+do_status() {
+  if [ -x "$BIN" ]; then say "Binary:  $BIN ($(current_version))"; else say "Binary:  not installed"; fi
+  if is_running; then say "Service: running (pid $(cat "$PIDF"))"; else say "Service: stopped"; fi
+  [ -f "$CONF" ] && say "Config:  $CONF (listen $(listen_addr))" || say "Config:  none"
+  [ -f "$PREV" ] && say "Rollback binary present: $PREV"
+  [ -x "$INIT" ] && say "Init:    $INIT" || say "Init:    missing"
+}
+
+case "$CMD" in
+  install)   do_install ;;
+  update)    do_update ;;
+  uninstall) do_uninstall ;;
+  status)    do_status ;;
+  ""|-h|--help|help) usage ;;
+  *) usage; exit 1 ;;
+esac

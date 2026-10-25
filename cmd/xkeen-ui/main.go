@@ -169,6 +169,8 @@ func cmdInit(args []string) int {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	cfgPath := fs.String("config", config.DefaultPath, "config file")
 	listen := fs.String("listen", "", "listen address, default from config defaults")
+	allow := fs.String("allow", "", "comma-separated CIDRs allowed to connect")
+	dns := fs.String("dns", "", "DNS server used by checks")
 	fs.Parse(args)
 	if _, err := os.Stat(*cfgPath); err == nil {
 		fmt.Fprintln(os.Stderr, "config already exists, not overwriting:", *cfgPath)
@@ -177,6 +179,12 @@ func cmdInit(args []string) int {
 	cfg := config.Default()
 	if *listen != "" {
 		cfg.Listen = *listen
+	}
+	if *allow != "" {
+		cfg.AllowCIDRs = strings.Split(*allow, ",")
+	}
+	if *dns != "" {
+		cfg.DNSServer = *dns
 	}
 	if err := cfg.Validate(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
