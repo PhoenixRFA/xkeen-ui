@@ -108,10 +108,36 @@ $('#view').onclick = async () => {
 
 let pol = { policies: [], clients: [] };
 
-function renderClients() {
+const filt = { status: 'all', policy: '*' };
+
+function clientMatches(c, skipPolicy) {
   const q = $('#q').value.toLowerCase();
+  if (q && !(c.name + ' ' + c.ip + ' ' + c.mac).toLowerCase().includes(q)) return false;
+  if (filt.status === 'online' && !c.online) return false;
+  if (filt.status === 'offline' && c.online) return false;
+  if (!skipPolicy && filt.policy !== '*' && (c.policy || '') !== filt.policy) return false;
+  return true;
+}
+
+// policy dropdown with counts that respect the search and status filters
+function renderFilterPolicy() {
+  const sel = $('#fpolicy'); sel.replaceChildren();
+  const base = pol.clients.filter(c => clientMatches(c, true));
+  const count = id => base.filter(c => (c.policy || '') === id).length;
+  [['*', 'All policies (' + base.length + ')'], ['', 'Default (no policy) (' + count('') + ')']]
+    .concat(pol.policies.map(p => [p.id, p.id + ' · ' + p.name + ' (' + count(p.id) + ')']))
+    .forEach(([v, t]) => { const o = el('option', t); o.value = v; sel.append(o); });
+  sel.value = filt.policy;
+  if (sel.value !== filt.policy) { filt.policy = '*'; sel.value = '*'; }
+}
+
+function renderClients() {
+  renderFilterPolicy();
   const box = $('#clients'); box.replaceChildren();
-  pol.clients.filter(c => !q || (c.name + ' ' + c.ip + ' ' + c.mac).toLowerCase().includes(q)).forEach(c => {
+  const filtered = filt.status !== 'all' || filt.policy !== '*' || $('#q').value !== '';
+  $('#fclear').hidden = !filtered;
+  const shown = pol.clients.filter(c => clientMatches(c, false));
+  shown.forEach(c => {
     const row = el('div', null, 'client');
     const left = el('div');
     const title = el('div', c.name, 'cname');
@@ -128,7 +154,7 @@ function renderClients() {
       sel.disabled = true;
       try {
         await api('/api/clients/' + encodeURIComponent(c.mac) + '/policy', { method: 'PUT', body: JSON.stringify({ policy: sel.value || null }) });
-        c.policy = sel.value; $('#unsaved').hidden = false; hl();
+        c.policy = sel.value; $('#unsaved').hidden = false; hl(); renderFilterPolicy();
       } catch (e) {
         if (e.status === 401) { show(false); return; }
         alert('Failed: ' + e.message); sel.value = c.policy || '';
@@ -137,8 +163,8 @@ function renderClients() {
     };
     row.append(left, sel); box.append(row);
   });
-  if (!box.children.length) box.append(el('div', 'No clients', 'mut'));
-  $('#ccount').textContent = '(' + pol.clients.length + ')';
+  if (!box.children.length) box.append(el('div', pol.clients.length ? 'No clients match the filters' : 'No clients', 'mut'));
+  $('#ccount').textContent = '(' + (filtered ? shown.length + ' of ' : '') + pol.clients.length + ')';
 }
 
 async function loadClients() {
@@ -146,6 +172,10 @@ async function loadClients() {
   catch (e) { if (e.status === 401) show(false); else { $('#clients').replaceChildren(el('div', e.message, 'warn')); } }
 }
 $('#q').oninput = renderClients;
+function syncSeg() { document.querySelectorAll('#fstatus button').forEach(b => b.classList.toggle('on', b.dataset.s === filt.status)); }
+document.querySelectorAll('#fstatus button').forEach(b => b.onclick = () => { filt.status = b.dataset.s; syncSeg(); renderClients(); });
+$('#fpolicy').onchange = () => { filt.policy = $('#fpolicy').value; renderClients(); };
+$('#fclear').onclick = () => { filt.status = 'all'; filt.policy = '*'; $('#q').value = ''; syncSeg(); renderClients(); };
 $('#savecfg').onclick = async e => {
   e.preventDefault(); e.stopPropagation();
   try { await api('/api/system/save', { method: 'POST' }); $('#unsaved').hidden = true; }
