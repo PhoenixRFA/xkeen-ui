@@ -56,8 +56,12 @@ func (r *Runner) Run(ctx context.Context, timeout time.Duration, env []string, n
 	cmd.Env = append(append(os.Environ(), safePath), env...)
 	out := &capBuf{max: 1 << 20}
 	cmd.Stdout, cmd.Stderr = out, out
+	cmd.WaitDelay = 2 * time.Second // init scripts leave daemons holding the pipe open
 	err := cmd.Run()
 	res := Result{Output: out.buf.String()}
+	if errors.Is(err, exec.ErrWaitDelay) {
+		return res, nil // process exited with 0; a background child kept the pipe
+	}
 	if ctx.Err() != nil {
 		res.Code = -1
 		return res, fmt.Errorf("%s: %w", name, ctx.Err())

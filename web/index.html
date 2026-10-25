@@ -19,6 +19,18 @@ button.ghost{background:transparent;color:var(--fg);border-color:var(--line)}
 .mut{color:var(--mut)}
 #login{max-width:340px;margin:12vh auto}
 [hidden]{display:none!important}
+h3{margin:0 0 8px;font-size:16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+.grid .card{margin:0}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;align-items:center}
+.row input{margin:0}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#555;margin-left:6px}
+.dot.on{background:#3ecf8e}.dot.off{background:var(--bad)}
+pre{background:#0c0e12;border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;max-height:360px;white-space:pre-wrap;word-break:break-all;font-size:13px}
+select{font:inherit;border-radius:8px;border:1px solid var(--line);background:#0c0e12;color:var(--fg);padding:10px 12px}
+button:disabled{opacity:.5;cursor:wait}
+.ok{color:#3ecf8e}.warn{color:var(--bad)}
+ul{margin:8px 0;padding-left:20px}
 </style>
 </head>
 <body>
@@ -31,7 +43,31 @@ button.ghost{background:transparent;color:var(--fg);border-color:var(--line)}
 </section>
 <div id="app" hidden>
   <header><strong>xkeen-ui</strong><button class="ghost" id="out">Sign out</button></header>
-  <main><div class="card">Signed in. Features arrive in the next stages.</div></main>
+  <main>
+    <div class="grid">
+      <div class="card"><h3>XKeen <span id="dot" class="dot"></span></h3>
+        <div id="st" class="mut">…</div><div id="ver2" class="mut"></div>
+        <div class="row">
+          <button data-act="start">Start</button><button data-act="stop" class="ghost">Stop</button>
+          <button data-act="restart" class="ghost">Restart</button><button data-act="test" class="ghost">Test config</button>
+        </div></div>
+      <div class="card"><h3>Subscription</h3>
+        <div id="sub" class="mut">…</div>
+        <div class="row"><button data-act="sub">Update now</button></div></div>
+    </div>
+    <div class="card"><h3>Main node</h3>
+      <div>Active: <strong id="eff">…</strong></div>
+      <input id="main" placeholder="Remark substring, fallbacks separated by |" spellcheck="false">
+      <div id="parts" class="mut"></div>
+      <div class="row"><button id="setmain">Apply</button></div>
+      <details><summary class="mut">Nodes in subscription</summary><ul id="nodes" class="mut"></ul></details></div>
+    <div class="card"><h3>Config files (read-only)</h3>
+      <div class="row"><select id="file"></select>
+      <label class="mut"><input type="checkbox" id="reveal" style="width:auto;margin:0 6px"> reveal secrets</label>
+      <button class="ghost" id="view">View</button></div>
+      <pre id="fileout" hidden></pre></div>
+    <div class="card" id="jobcard" hidden><h3 id="jobname"></h3><pre id="jobout"></pre></div>
+  </main>
 </div>
 <footer class="mut" style="text-align:center;padding:12px">xkeen-ui <span id="ver"></span></footer>
 <script src="/app.js"></script>
