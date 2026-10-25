@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -55,7 +56,7 @@ func (r *Runner) Run(ctx context.Context, timeout time.Duration, env []string, n
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, resolve(name), args...)
 	cmd.Env = append(append(os.Environ(), safePath), env...)
 	out := &capBuf{max: 1 << 20}
 	cmd.Stdout, cmd.Stderr = out, out
@@ -78,4 +79,53 @@ func (r *Runner) Run(ctx context.Context, timeout time.Duration, env []string, n
 		res.Code = -1
 	}
 	return res, err
+}
+
+// resolve finds a bare command name in the fixed safe PATH (init.d may run with a tiny PATH).
+func resolve(name string) string {
+	if strings.Contains(name, "/") {
+		return name
+	}
+	for _, d := range strings.Split(strings.TrimPrefix(safePath, "PATH="), ":") {
+		p := d + "/" + name
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
+			return p
+		}
+	}
+	return name
+}
+
+// Proc is a long-running whitelisted process (the temporary xray of the tunnel check).
+type Proc struct {
+	cmd  *exec.Cmd
+	out  *capBuf
+	done chan struct{}
+}
+
+func (r *Runner) Start(env []string, name string, args ...string) (*Proc, error) {
+	if !r.allowed[name] {
+		return nil, fmt.Errorf("command not allowed: %s", name)
+	}
+	cmd := exec.Command(resolve(name), args...)
+	cmd.Env = append(append(os.Environ(), safePath), env...)
+	out := &capBuf{max: 64 << 10}
+	cmd.Stdout, cmd.Stderr = out, out
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	p := &Proc{cmd: cmd, out: out, done: make(chan struct{})}
+	go func() { cmd.Wait(); close(p.done) }()
+	return p, nil
+}
+
+func (p *Proc) Done() <-chan struct{} { return p.done }
+
+// Stop kills the process and returns what it printed.
+func (p *Proc) Stop() string {
+	p.cmd.Process.Kill()
+	select {
+	case <-p.done:
+	case <-time.After(3 * time.Second):
+	}
+	return ansiRe.ReplaceAllString(p.out.buf.String(), "")
 }

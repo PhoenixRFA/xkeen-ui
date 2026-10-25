@@ -34,6 +34,12 @@ ul{margin:8px 0;padding-left:20px}
 .client{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line)}
 .cname{font-weight:600}.small{font-size:13px}
 select.hl{border-color:var(--acc)}
+details.card>summary{display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;list-style:none}
+details.card>summary::-webkit-details-marker{display:none}
+details.card>summary h3{margin:0}
+details.card>summary h3::before{content:"▸ ";color:var(--mut)}
+details.card[open]>summary h3::before{content:"▾ "}
+details.card[open]>summary{margin-bottom:12px}
 @media(max-width:520px){.client{flex-direction:column;align-items:stretch}}
 </style>
 </head>
@@ -46,7 +52,7 @@ select.hl{border-color:var(--acc)}
   <button id="go">Sign in</button>
 </section>
 <div id="app" hidden>
-  <header><strong>xkeen-ui</strong><span><span id="unsaved" class="warn" hidden>Unsaved router changes <button id="savecfg">Save</button> </span><button class="ghost" id="out">Sign out</button></span></header>
+  <header><strong>xkeen-ui</strong><button class="ghost" id="out">Sign out</button></header>
   <main>
     <div class="grid">
       <div class="card"><h3>XKeen <span id="dot" class="dot"></span></h3>
@@ -65,9 +71,24 @@ select.hl{border-color:var(--acc)}
       <div id="parts" class="mut"></div>
       <div class="row"><button id="setmain">Apply</button></div>
       <details><summary class="mut">Nodes in subscription</summary><ul id="nodes" class="mut"></ul></details></div>
-    <div class="card"><h3>Clients</h3>
+    <details class="card" id="clientsCard" open>
+      <summary><h3>Clients <span id="ccount" class="mut"></span></h3>
+        <span id="unsaved" class="warn" hidden>Unsaved changes <button id="savecfg">Save</button></span></summary>
       <input id="q" placeholder="Search by name, IP or MAC" spellcheck="false">
-      <div id="clients"></div></div>
+      <div id="clients"></div></details>
+    <details class="card" id="checksCard" open><summary><h3>Checks</h3></summary>
+      <div class="row"><button id="chkRouter">Router check</button><span class="mut">ping + DNS + direct IP</span></div>
+      <pre id="outRouter" hidden></pre>
+      <div class="row"><input id="domain" placeholder="example.com" style="flex:1;min-width:180px" spellcheck="false"><button id="chkSite">Check site</button></div>
+      <pre id="outSite" hidden></pre>
+      <div class="row"><select id="node"></select><button id="chkTunnel">Tunnel check</button><span class="mut">temporary xray, takes a few seconds</span></div>
+      <pre id="outTunnel" hidden></pre></details>
+    <details class="card" id="logsCard"><summary><h3>Logs</h3></summary>
+      <div class="row" style="margin-top:0">
+        <select id="logname"><option value="error">xray error.log</option><option value="sub">sub-update.log</option><option value="router">router log</option></select>
+        <select id="logn"><option>200</option><option>500</option><option>1000</option></select>
+        <button class="ghost" id="logrefresh">Refresh</button></div>
+      <pre id="logout"></pre></details>
     <div class="card"><h3>Config files (read-only)</h3>
       <div class="row"><select id="file"></select>
       <label class="mut"><input type="checkbox" id="reveal" style="width:auto;margin:0 6px"> reveal secrets</label>

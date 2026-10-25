@@ -58,6 +58,7 @@ async function loadStatus() { try { renderStatus(await api('/api/xkeen/status'))
 async function loadAll() {
   loadStatus();
   loadClients();
+  try { const n = await api('/api/check/nodes'); const sel = $('#node'); sel.replaceChildren(); n.nodes.forEach(t => sel.append(el('option', t))); } catch (e) {}
   try { const f = await api('/api/files'); const sel = $('#file'); sel.replaceChildren(); f.files.forEach(n => sel.append(el('option', n))); } catch (e) {}
 }
 
@@ -137,6 +138,7 @@ function renderClients() {
     row.append(left, sel); box.append(row);
   });
   if (!box.children.length) box.append(el('div', 'No clients', 'mut'));
+  $('#ccount').textContent = '(' + pol.clients.length + ')';
 }
 
 async function loadClients() {
@@ -144,10 +146,67 @@ async function loadClients() {
   catch (e) { if (e.status === 401) show(false); else { $('#clients').replaceChildren(el('div', e.message, 'warn')); } }
 }
 $('#q').oninput = renderClients;
-$('#savecfg').onclick = async () => {
+$('#savecfg').onclick = async e => {
+  e.preventDefault(); e.stopPropagation();
   try { await api('/api/system/save', { method: 'POST' }); $('#unsaved').hidden = true; }
   catch (e) { alert(e.message); }
 };
+
+// collapse state of the Clients card is remembered
+const cc = $('#clientsCard');
+try { if (localStorage.getItem('xk.clients') === '0') cc.open = false; } catch (e) {}
+cc.addEventListener('toggle', () => { try { localStorage.setItem('xk.clients', cc.open ? '1' : '0'); } catch (e) {} });
+
+// ---- checks ----
+function lines(pre, items) { pre.replaceChildren(); items.forEach(([t, c]) => pre.append(el('div', t, c))); pre.hidden = false; }
+async function withBusy(btn, pre, fn) {
+  const label = btn.textContent; btn.disabled = true; btn.textContent = 'Running…';
+  try { lines(pre, await fn()); }
+  catch (e) { if (e.status === 401) { show(false); return; } lines(pre, [[e.message, 'warn']]); }
+  btn.disabled = false; btn.textContent = label;
+}
+const echo = (label, e) => e.ok
+  ? [[label + ': ' + e.ip + ' · avg ' + e.avg_ms + ' ms (' + e.times_ms.join(', ') + ') via ' + e.service, 'ok']]
+  : [[label + ': failed — ' + (e.error || 'no response'), 'warn']];
+
+$('#chkRouter').onclick = e => withBusy(e.target, $('#outRouter'), async () => {
+  const d = await api('/api/check/router', { method: 'POST' }), p = d.ping, n = d.dns;
+  return [
+    [p.ok ? 'Ping ' + p.target + ': ' + p.loss_pct + '% loss, avg ' + p.avg_ms + ' ms' : 'Ping ' + p.target + ': FAILED' + (p.error ? ' — ' + p.error : ''), p.ok ? 'ok' : 'warn'],
+    [n.ok ? 'DNS ' + n.probe + ' @' + n.server + ': ' + n.ip + ' (' + n.ms + ' ms)' : 'DNS ' + n.probe + ' @' + n.server + ': FAILED', n.ok ? 'ok' : 'warn'],
+    ...echo('Direct IP', d.direct)];
+});
+
+$('#chkSite').onclick = e => withBusy(e.target, $('#outSite'), async () => {
+  const d = await api('/api/check/site', { method: 'POST', body: JSON.stringify({ domain: $('#domain').value }) });
+  const note = ['IP-level check only: domain rules from 05_routing.json are not evaluated.', 'mut'];
+  if (d.verdict === 'unresolved') return [[d.domain + ': cannot resolve', 'warn'], [d.dns_output || '', 'mut']];
+  const head = [d.domain + ' → ' + d.ip, ''];
+  if (d.verdict === 'direct') return [head, ['DIRECT — in ' + d.set + ', bypasses the tunnel', 'ok'], note];
+  if (d.verdict === 'tunnel') return [head, ['VIA TUNNEL — not in ' + d.set, 'ok'], note];
+  return [head, ['ipset check failed: ' + (d.error || d.ipset_output || 'unknown'), 'warn']];
+});
+
+$('#chkTunnel').onclick = e => withBusy(e.target, $('#outTunnel'), async () => {
+  const d = await api('/api/check/tunnel', { method: 'POST', body: JSON.stringify({ node: $('#node').value }) });
+  if (d.ok) return [['Tunnel OK (' + d.node + ')', 'ok'], ...echo('Exit IP', d.tunnel), ...echo('Direct IP', d.direct),
+    [d.via_vpn ? 'Traffic leaves via the VPN node (IPs differ).' : 'Exit IP equals the direct IP — traffic is NOT going through a VPN.', d.via_vpn ? 'ok' : 'warn']];
+  const out = [['Tunnel DOWN (' + d.node + '): ' + (d.error || 'no response'), 'warn']];
+  if (d.probe) out.push([d.probe.ok ? 'Reachable by IP (' + d.probe.url + '): looks like a DNS problem.' : 'Not reachable by IP either: channel or node problem.', 'mut']);
+  if (d.xray_log) out.push([d.xray_log, 'mut']);
+  return out;
+});
+
+// ---- logs ----
+async function loadLog() {
+  const o = $('#logout');
+  try { o.textContent = (await api('/api/logs/' + $('#logname').value + '?n=' + $('#logn').value)).content || '(empty)'; o.scrollTop = o.scrollHeight; }
+  catch (e) { if (e.status === 401) show(false); else o.textContent = e.message; }
+}
+$('#logrefresh').onclick = loadLog;
+$('#logname').onchange = loadLog;
+$('#logn').onchange = loadLog;
+$('#logsCard').addEventListener('toggle', () => { if ($('#logsCard').open) loadLog(); });
 
 (async () => {
   try { $('#ver').textContent = (await api('/api/version')).version; } catch (e) {}
